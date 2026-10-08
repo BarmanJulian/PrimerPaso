@@ -22,6 +22,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.example.primerpaso.ui.theme.PrimerPasoTheme
 import kotlinx.coroutines.launch
@@ -77,25 +79,48 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+/**
+ * Pantalla "con estado": obtiene el ViewModel y observa el estado que sale de Room.
+ * No sabe dibujar nada; delega en [BuscaYaContent].
+ */
 @Composable
 fun BuscaYaApp() {
     val context = LocalContext.current
+    val viewModel: FarmaciasViewModel = viewModel(factory = FarmaciasViewModel.Factory(context))
+
+    // collectAsStateWithLifecycle: solo recolecta mientras la pantalla está visible.
+    val estado by viewModel.uiState.collectAsStateWithLifecycle()
+    val actualizando by viewModel.actualizando.collectAsStateWithLifecycle()
+
+    BuscaYaContent(
+        estado       = estado,
+        actualizando = actualizando,
+        onActualizar = { viewModel.refrescar(forzar = true) }
+    )
+}
+
+/** Pantalla "sin estado propio de datos": dibuja lo que le pasan (por eso se puede previsualizar). */
+@Composable
+fun BuscaYaContent(
+    estado: FarmaciasUiState,
+    actualizando: Boolean,
+    onActualizar: () -> Unit
+) {
+    val context = LocalContext.current
     val scope   = rememberCoroutineScope()
 
+    // La lista sale siempre de Room, sea cual sea el estado.
+    val farmacias = when (estado) {
+        FarmaciasUiState.Cargando         -> emptyList<FarmaciaEntity>()
+        is FarmaciasUiState.Exito        -> estado.farmacias
+        is FarmaciasUiState.SinConexion  -> estado.farmacias
+        is FarmaciasUiState.Error        -> estado.farmacias
+    }
+
     var busqueda      by remember { mutableStateOf("") }
-    var farmacias     by remember { mutableStateOf<List<Farmacia>>(emptyList()) }
     var resultados    by remember { mutableStateOf<List<ResultadoBusqueda>>(emptyList()) }
     var buscando      by remember { mutableStateOf(false) }
     var errorBusqueda by remember { mutableStateOf<String?>(null) }
-
-    LaunchedEffect(Unit) {
-        try {
-            val respuesta = RetrofitClient.api.obtenerFarmacias()
-            farmacias = respuesta.farmacias ?: emptyList()  // ← null-safe
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-    }
 
     Column(modifier = Modifier.fillMaxSize()) {
 
@@ -241,29 +266,56 @@ fun BuscaYaApp() {
                     modifier = Modifier
                         .fillMaxWidth()
                         .wrapContentWidth(Alignment.CenterHorizontally)
-                        .padding(top = 2.dp, bottom = 16.dp)
+                        .padding(top = 2.dp, bottom = 8.dp)
                 )
+
+                // Aviso cuando no hay internet: los datos que se ven son los guardados en Room.
+                if (estado is FarmaciasUiState.SinConexion) {
+                    Text(
+                        text = "Sin conexión, mostrando datos guardados",
+                        fontSize = 12.sp,
+                        color = AzulTexto,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(AzulClaro)
+                            .padding(10.dp)
+                    )
+                }
+                if (estado is FarmaciasUiState.Error) {
+                    Text(
+                        text = "No se pudo actualizar: ${estado.mensaje}",
+                        fontSize = 12.sp,
+                        color = Color.Red,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                    )
+                }
+
+                // Botón "Actualizar": fuerza una nueva descarga desde la API.
+                OutlinedButton(
+                    onClick  = onActualizar,
+                    enabled  = !actualizando,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp, bottom = 12.dp)
+                ) {
+                    if (actualizando) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    } else {
+                        Text("Actualizar")
+                    }
+                }
+
+                if (estado is FarmaciasUiState.Cargando) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().padding(24.dp),
+                        contentAlignment = Alignment.Center
+                    ) { CircularProgressIndicator() }
+                }
             }
 
-            items(farmacias) { farmacia ->
-                val partes    = farmacia.nombre.split(" ")
-                val iniciales = if (partes.size >= 2)
-                    "${partes[0].first()}${partes[1].first()}"
-                else farmacia.nombre.take(2)
-
-                val dia = farmacia.fecha_iso.substring(8, 10)
-
-                val farmaciaUI = FarmaciaUI(
-                    iniciales = iniciales.uppercase(),
-                    diaSemana = farmacia.dia_semana,
-                    numeroDia = dia,
-                    mes       = "Jun",
-                    nombre    = farmacia.nombre,
-                    direccion = farmacia.direccion,
-                    telefono  = farmacia.telefono ?: "",
-                    imagen    = farmacia.imagen,
-                    turnoTipo = TurnoTipo.PROXIMO
-                )
+            items(farmacias, key = { it.id }) { entidad ->
+                val farmaciaUI = entidad.toUI()
 
                 FarmaciaItem(farmaciaUI) {
                     val intent = Intent(context, FarmaciaDetalleActivity::class.java).apply {
@@ -399,6 +451,19 @@ fun FarmaciaItem(farmacia: FarmaciaUI, onClick: () -> Unit) {
 @Composable
 fun BuscaYaPreview() {
     PrimerPasoTheme {
-        BuscaYaApp()
+        BuscaYaContent(
+            estado = FarmaciasUiState.SinConexion(
+                listOf(
+                    FarmaciaEntity(
+                        id = "2026-06-15|Farmacia Central", posicion = 0,
+                        fechaRaw = "15/06/2026", fechaIso = "2026-06-15", diaSemana = "Lun",
+                        nombre = "Farmacia Central", direccion = "San Martín 123",
+                        imagen = "", telefono = "03573 421234", fechaActualizacion = 0L
+                    )
+                )
+            ),
+            actualizando = false,
+            onActualizar = {}
+        )
     }
 }
