@@ -32,6 +32,21 @@ class FarmaciaRepository(
     val farmacias: Flow<List<FarmaciaEntity>> = dao.obtenerTodos()
 
     /**
+     * Farmacias cuyo nombre contiene [texto]. El filtro lo resuelve Room con una query LIKE.
+     * Si el texto está vacío devuelve todas. Como es un Flow, se vuelve a emitir si la tabla cambia.
+     */
+    fun buscar(texto: String): Flow<List<FarmaciaEntity>> {
+        val limpio = texto.trim()
+        if (limpio.isEmpty()) return farmacias
+        // En LIKE, % y _ son comodines: los escapamos para que "50%" busque el texto tal cual.
+        val escapado = limpio
+            .replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        return dao.buscarPorNombre(escapado)
+    }
+
+    /**
      * Baja los datos de la API y los guarda en Room.
      *
      * @param forzar si es false, solo llama a la API cuando Room está vacío;

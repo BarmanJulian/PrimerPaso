@@ -13,6 +13,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -95,7 +96,8 @@ fun BuscaYaApp() {
     BuscaYaContent(
         estado       = estado,
         actualizando = actualizando,
-        onActualizar = { viewModel.refrescar(forzar = true) }
+        onActualizar = { viewModel.refrescar(forzar = true) },
+        onFiltrar    = viewModel::filtrar
     )
 }
 
@@ -104,7 +106,8 @@ fun BuscaYaApp() {
 fun BuscaYaContent(
     estado: FarmaciasUiState,
     actualizando: Boolean,
-    onActualizar: () -> Unit
+    onActualizar: () -> Unit,
+    onFiltrar: (String) -> Unit
 ) {
     val context = LocalContext.current
     val scope   = rememberCoroutineScope()
@@ -117,7 +120,8 @@ fun BuscaYaContent(
         is FarmaciasUiState.Error        -> estado.farmacias
     }
 
-    var busqueda      by remember { mutableStateOf("") }
+    // rememberSaveable: el texto sobrevive a una rotación de pantalla.
+    var busqueda      by rememberSaveable { mutableStateOf("") }
     var resultados    by remember { mutableStateOf<List<ResultadoBusqueda>>(emptyList()) }
     var buscando      by remember { mutableStateOf(false) }
     var errorBusqueda by remember { mutableStateOf<String?>(null) }
@@ -146,7 +150,10 @@ fun BuscaYaContent(
             )
             OutlinedTextField(
                 value = busqueda,
-                onValueChange = { busqueda = it },
+                onValueChange = {
+                    busqueda = it
+                    onFiltrar(it)   // filtra las farmacias guardadas (Room, query LIKE) en tiempo real
+                },
                 placeholder = {
                     Text("Buscar farmacia, negocio...", fontSize = 13.sp, color = GrisTexto)
                 },
@@ -314,6 +321,17 @@ fun BuscaYaContent(
                 }
             }
 
+            if (farmacias.isEmpty() && busqueda.isNotBlank() && estado !is FarmaciasUiState.Cargando) {
+                item {
+                    Text(
+                        text = "No hay farmacias guardadas que coincidan con \"$busqueda\"",
+                        fontSize = 12.sp,
+                        color = GrisTexto,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
+                    )
+                }
+            }
+
             items(farmacias, key = { it.id }) { entidad ->
                 val farmaciaUI = entidad.toUI()
 
@@ -463,7 +481,8 @@ fun BuscaYaPreview() {
                 )
             ),
             actualizando = false,
-            onActualizar = {}
+            onActualizar = {},
+            onFiltrar    = {}
         )
     }
 }

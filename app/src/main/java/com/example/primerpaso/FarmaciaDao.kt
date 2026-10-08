@@ -37,8 +37,10 @@ interface FarmaciaDao {
      * Búsqueda por nombre. El texto viaja como PARÁMETRO (:texto), nunca pegado al SQL
      * con string templates: así se evita la inyección SQL.
      * Los % del LIKE los agrega el propio SQL con el operador || (concatenar).
+     * ESCAPE '\\' permite buscar los caracteres % y _ literalmente (el repositorio los escapa).
+     * El filtrado lo hace SQLite, no se filtra la lista en memoria.
      */
-    @Query("SELECT * FROM farmacias WHERE nombre LIKE '%' || :texto || '%' ORDER BY posicion ASC")
+    @Query("SELECT * FROM farmacias WHERE nombre LIKE '%' || :texto || '%' ESCAPE '\\' ORDER BY posicion ASC")
     fun buscarPorNombre(texto: String): Flow<List<FarmaciaEntity>>
 
     /** Cantidad de filas guardadas (sirve para saber si la tabla está vacía). */

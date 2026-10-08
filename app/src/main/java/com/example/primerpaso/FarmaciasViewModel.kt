@@ -4,11 +4,13 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -39,9 +41,21 @@ private sealed interface EstadoRed {
     data class Fallo(val mensaje: String) : EstadoRed
 }
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class FarmaciasViewModel(private val repositorio: FarmaciaRepository) : ViewModel() {
 
     private val estadoRed = MutableStateFlow<EstadoRed>(EstadoRed.Cargando)
+
+    /** Texto que escribió el usuario en el buscador. */
+    private val textoBusqueda = MutableStateFlow("")
+
+    /**
+     * Lista que sale de Room ya filtrada. flatMapLatest: cada vez que cambia el texto
+     * se cancela la consulta anterior y se abre otra query LIKE en la base.
+     */
+    private val farmaciasFiltradas = textoBusqueda.flatMapLatest { texto ->
+        repositorio.buscar(texto)
+    }
 
     private val _actualizando = MutableStateFlow(false)
     /** true mientras hay una llamada a la API en curso (para deshabilitar el botón). */
@@ -52,7 +66,7 @@ class FarmaciasViewModel(private val repositorio: FarmaciaRepository) : ViewMode
      * La lista SIEMPRE viene de Room; la API solo decide qué aviso mostrar.
      */
     val uiState: StateFlow<FarmaciasUiState> = combine(
-        repositorio.farmacias,
+        farmaciasFiltradas,
         estadoRed
     ) { lista, red ->
         when (red) {
@@ -71,6 +85,11 @@ class FarmaciasViewModel(private val repositorio: FarmaciaRepository) : ViewMode
 
     init {
         refrescar()   // Al iniciar: solo llama a la API si Room está vacío.
+    }
+
+    /** Se llama en cada letra que escribe el usuario: la lista se actualiza en tiempo real. */
+    fun filtrar(texto: String) {
+        textoBusqueda.value = texto
     }
 
     /** @param forzar true = botón "Actualizar": siempre intenta bajar datos nuevos. */
